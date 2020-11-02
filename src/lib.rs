@@ -42,6 +42,7 @@ pub struct LapJV<'a, T: 'a> {
     v: Vec<T>,
     in_col: Vec<usize>,
     in_row: Vec<usize>,
+    epsilon: bool,
 }
 
 /// Solve LAP problem given cost matrix
@@ -49,11 +50,11 @@ pub struct LapJV<'a, T: 'a> {
 /// R. Jonker, A. Volgenant. A Shortest Augmenting Path Algorithm for
 /// Dense and Sparse Linear Assignment Problems. Computing 38, 325-340
 /// (1987)
-pub fn lapjv<T>(costs: &Matrix<T>) -> Result<(Vec<usize>, Vec<usize>), LapJVError>
+pub fn lapjv<T>(costs: &Matrix<T>, epsilon: bool) -> Result<(Vec<usize>, Vec<usize>), LapJVError>
 where
     T: LapJVCost,
 {
-    LapJV::new(costs).solve()
+    LapJV::new(costs, epsilon).solve()
 }
 
 /// Calculate solution cost by a result row
@@ -61,8 +62,7 @@ pub fn cost<T>(input: &Matrix<T>, row: &[usize]) -> T
 where
     T: LapJVCost,
 {
-    (0..row.len())
-        .fold(T::zero(), |acc, i| acc + input[(i, row[i])])
+    (0..row.len()).fold(T::zero(), |acc, i| acc + input[(i, row[i])])
 }
 
 /// Solve LAP problem given cost matrix
@@ -74,7 +74,7 @@ impl<'a, T> LapJV<'a, T>
 where
     T: LapJVCost,
 {
-    pub fn new(costs: &'a Matrix<T>) -> Self {
+    pub fn new(costs: &'a Matrix<T>, epsilon: bool) -> Self {
         let dim = costs.dim().0; // square matrix dimensions
         let free_rows = Vec::with_capacity(dim); // list of unassigned rows.
         let v = Vec::with_capacity(dim);
@@ -87,6 +87,7 @@ where
             v,
             in_col,
             in_row,
+            epsilon,
         }
     }
 
@@ -94,16 +95,30 @@ where
         if self.costs.dim().0 != self.costs.dim().1 {
             return Err(LapJVError("Input error: matrix is not square"));
         }
+
+        let t = std::time::Instant::now();
+
         self.ccrrt_dense();
+
+        println!("ccrrt_dense: {:?}", t.elapsed());
 
         let mut i = 0;
         while !self.free_rows.is_empty() && i < 2 {
             self.carr_dense();
+            println!(
+                "carr_dense: {:?} (i = {}) (free_rows = {})",
+                t.elapsed(),
+                i,
+                self.free_rows.len()
+            );
             i += 1;
         }
 
+        println!("carr_dense: {:?} ({})", t.elapsed(), i);
+
         if !self.free_rows.is_empty() {
             self.ca_dense()?;
+            println!("ca_dense: {:?}", t.elapsed());
         }
 
         Ok((self.in_row, self.in_col))
@@ -181,7 +196,13 @@ where
 
             let mut i0 = self.in_col[j1];
             let v1_new = self.v[j1] - (v2 - v1);
-            let v1_lowers = v1_new < self.v[j1]; // the trick to eliminate the epsilon bug
+            let v1_lowers = if self.epsilon {
+                (self.v[j1] - v1_new) > (T::epsilon() + T::epsilon())
+            } else {
+                v1_new < self.v[j1]
+            }; // the trick to eliminate the epsilon bug
+
+            // dbg!((v1_new, self.v[j1]));
 
             if rr_cnt < current * dim {
                 if v1_lowers {
@@ -216,6 +237,8 @@ where
             self.in_row[free_i] = j1;
             self.in_col[j1] = free_i;
         }
+        println!("rr_cnt = {}", rr_cnt);
+
         self.free_rows.truncate(new_free_rows);
     }
 
@@ -225,6 +248,7 @@ where
         let mut pred = vec![0; dim];
 
         let free_rows = std::mem::replace(&mut self.free_rows, vec![]);
+
         for freerow in free_rows {
             trace!("looking at freerow={}", freerow);
 
@@ -280,7 +304,6 @@ where
                     }
                 }
             }
-
             if final_j.is_none() {
                 trace!("{}..{} -> scan", lo, hi);
                 final_j = self.scan_dense(&mut lo, &mut hi, &mut d, &mut collist, pred);
@@ -293,6 +316,7 @@ where
         for &j in collist.iter().take(n_ready) {
             self.v[j] += d[j] - mind;
         }
+
         final_j.unwrap()
     }
 
@@ -410,7 +434,7 @@ mod tests {
     fn it_works() {
         let m = Matrix::from_shape_vec((3, 3), vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0])
             .unwrap();
-        let result = lapjv(&m).unwrap();
+        let result = lapjv(&m, true).unwrap();
         assert_eq!(result.0, vec![2, 0, 1]);
         assert_eq!(result.1, vec![1, 2, 0]);
     }
@@ -528,7 +552,7 @@ mod tests {
             74.0,
         ];
         let m = Matrix::from_shape_vec((10, 10), c).unwrap();
-        let result = lapjv(&m).unwrap();
+        let result = lapjv(&m, true).unwrap();
         let cost = cost(&m, &result.0);
         assert_eq!(cost, 1403.0);
         assert_eq!(result.0, vec![7, 9, 3, 8, 1, 4, 5, 6, 2, 0]);
@@ -551,7 +575,7 @@ mod tests {
             m.push(rand::random::<f64>() * 100.0);
         }
         let m = Matrix::from_shape_vec((DIM, DIM), m).unwrap();
-        let _result = lapjv(&m).unwrap();
+        let _result = lapjv(&m, true).unwrap();
     }
 
     fn solve_random10() -> (Matrix<f64>, (Vec<usize>, Vec<usize>)) {
@@ -568,7 +592,7 @@ mod tests {
             74.0,
         ];
         let m = Matrix::from_shape_vec((N, N), c).unwrap();
-        let result = lapjv(&m).unwrap();
+        let result = lapjv(&m, true).unwrap();
         (m, result)
     }
 
@@ -593,7 +617,7 @@ mod tests {
             2926.089718214265,
         ];
         let matrix = Matrix::from_shape_vec((4, 4), m).unwrap();
-        let result = lapjv(&matrix);
+        let result = lapjv(&matrix, true);
         result.unwrap();
     }
 

@@ -8,12 +8,15 @@ documentation = "https://docs.rs/lapjv"
 homepage = "https://github.com/Antti/lapjv-rust"
 repository = "https://github.com/Antti/lapjv-rust.git"
 
-build = "build.rs"
 include = [
     "**/*.rs",
     "Cargo.toml",
     "README.md"
 ]
+
+[profile.release]
+debug = true
+lto = false
 
 [badges]
 travis-ci = { repository = "Antti/lapjv-rust", branch = "master" }
@@ -27,6 +30,10 @@ ndarray = "0.12"
 num-traits = "0.1"
 log = { version = "0.4", features = ["max_level_debug", "release_max_level_warn"] }
 
+
 [dev-dependencies]
+csv = "1.0"
+pretty_assertions = "0.6"
 rand = "0.6"
 rustc_version = "0.2"
+serde = "1.0"
